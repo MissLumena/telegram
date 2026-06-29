@@ -1,0 +1,18 @@
+{
+  "name": "beauty-salon-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram bot for a beauty salon: booking + cancellation (Telegraf, in-memory FSM)",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3"
+  }
+}
