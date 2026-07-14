@@ -23,12 +23,10 @@ if (!token) {
   process.exit(1);
 }
 
-// ===== СОЗДАНИЕ БОТА =====
 console.log("Создаём бота...");
 const bot = buildBot(token);
 console.log("Бот создан, запускаем...");
 
-// ===== НАСТРОЙКА WEBHOOK =====
 const port = process.env.PORT || 10000;
 const webhookUrl = process.env.WEBHOOK_URL;
 
@@ -39,39 +37,33 @@ if (!webhookUrl) {
 
 console.log(`🌐 Настраиваем webhook на: ${webhookUrl}`);
 
-(async function startBot() {
-  try {
-    // Устанавливаем webhook
-    await bot.telegram.setWebhook(webhookUrl);
-    console.log(`✅ Webhook установлен на ${webhookUrl}`);
+try {
+  await bot.telegram.setWebhook(webhookUrl);
+  console.log(`✅ Webhook установлен на ${webhookUrl}`);
 
-    // ===== СОЗДАЁМ СЕРВЕР ЧЕРЕЗ EXPRESS =====
-    const app = express();
-    app.use(express.json());
+  const app = express();
+  app.use(express.json());
 
-    // Обработчик для webhook (Telegram будет стучаться сюда)
-    app.post('/webhook', (req, res) => {
-      bot.handleUpdate(req.body, res);
-    });
+  // === ЭТОТ ОБРАБОТЧИК ДОЛЖЕН БЫТЬ ===
+  app.post('/webhook', (req, res) => {
+    bot.handleUpdate(req.body, res);
+  });
+  // =====================================
 
-    // Простой эндпоинт для проверки здоровья (для Render)
-    app.get('/health', (req, res) => {
-      res.status(200).send('OK');
-    });
+  app.get('/health', (req, res) => {
+    res.status(200).send('OK');
+  });
 
-    // Запускаем сервер на всех интерфейсах
-    app.listen(port, '0.0.0.0', () => {
-      console.log(`✅ Бот запущен в режиме webhook на порту ${port}`);
-      console.log(`📨 Обновления принимаются по адресу: ${webhookUrl}`);
-    });
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`✅ Бот запущен в режиме webhook на порту ${port}`);
+    console.log(`📨 Обновления принимаются по адресу: ${webhookUrl}`);
+  });
 
-  } catch (e) {
-    console.error("❌ Ошибка при запуске:", e?.message ?? e);
-    process.exit(1);
-  }
-})();
+} catch (e) {
+  console.error("❌ Ошибка при запуске:", e?.message ?? e);
+  process.exit(1);
+}
 
-// Корректная остановка
 const stop = (sig) => {
   console.log(`\n${sig} received, stopping...`);
   bot.stop(sig);
