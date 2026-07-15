@@ -56,4 +56,47 @@ export function getAvailableTimeSlots(dateId) {
     return h * 60 + m > currentMinutes + 30;
   });
 }
-\
+// Next N days as bookable dates, excluding Mondays (salon closed).
+export function getAvailableDates(daysAhead = 14) {
+  const out = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0, 0);
+  const startUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayMs = 24 * 60 * 60 * 1000;
+
+  for (let i = 0; i < daysAhead; i++) {
+    const d = new Date(startUtc + i * dayMs);
+    if (d.getUTCDay() === 1) continue; // Monday closed
+    out.push({
+      id: d.toISOString().slice(0, 10),
+      label: d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "long" }),
+    });
+  }
+  return out;
+}
+
+export const serviceById = (id) => SERVICES.find((s) => s.id === id);
+export const masterById = (id) => MASTERS.find((m) => m.id === id);
+export const mastersForService = (serviceId) => MASTERS.filter((m) => m.services.includes(serviceId));
+// Next N days as bookable dates, excluding Mondays (salon closed).
+export function getAvailableDates(daysAhead = 14) {
+  const out = [];
+  const now = new Date();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  for (let i = 0; i < daysAhead; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    if (d.getDay() === 1) continue; // Monday closed
+    out.push({
+      id: d.toISOString().slice(0, 10),
+      label: d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "long" }),
+    });
+  }
+  return out;
+}
+
+export const serviceById = (id) => SERVICES.find((s) => s.id === id);
+export const masterById = (id) => MASTERS.find((m) => m.id === id);
+export const mastersForService = (serviceId) => MASTERS.filter((m) => m.services.includes(serviceId));
