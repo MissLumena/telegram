@@ -2,23 +2,60 @@
 // The edge function handles JWT auth to Google Sheets API; this module is a
 // thin async client. Phone normalization/validation stays here for input checks.
 
-const EDGE_URL = `${process.env.SUPABASE_URL}/functions/v1/sheets-appointments`;
 const EDGE_KEY = process.env.SUPABASE_ANON_KEY;
 
 async function callEdge(body) {
-  const res = await fetch(EDGE_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${EDGE_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data.error) {
-    throw new Error(data.error ?? `Edge function error ${res.status}`);
+  const EDGE_URL = process.env.SUPABASE_URL ? `${process.env.SUPABASE_URL}/functions/v1/sheets-appointments` : null;
+  if (!EDGE_URL) throw new Error('SUPABASE_URL is not set; cannot call edge function');
+
+  const maxAttempts = 2;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(EDGE_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${EDGE_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      let data = {};
+      if (typeof res.json === 'function') {
+        data = await res.json().catch(() => ({}));
+      } else {
+        const text = typeof res.text === 'function' ? await res.text().catch(() => "") : "";
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (e) {
+          data = { error: `Invalid JSON response: ${text}` };
+        }
+      }
+
+      if (!res.ok) {
+        const errMsg = data?.error ?? `Edge function error ${res.status}`;
+        // Retry on server errors
+        if (res.status >= 500 && attempt < maxAttempts) {
+          lastErr = new Error(errMsg);
+          await new Promise((r) => setTimeout(r, 200 * attempt));
+          continue;
+        }
+        throw new Error(errMsg);
+      }
+
+      if (data.error) throw new Error(data.error);
+      return data;
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxAttempts) {
+        console.warn(`callEdge attempt ${attempt} failed, retrying:`, e.message);
+        await new Promise((r) => setTimeout(r, 150 * attempt));
+        continue;
+      }
+    }
   }
-  return data;
+  throw lastErr;
 }
 
 let headerInitialized = false;
