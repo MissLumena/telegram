@@ -11,12 +11,16 @@ const PORT = Number(process.env.PORT || 3000);
 
 const bot = buildBot(BOT_TOKEN);
 
-bot.launch()
-  .then(() => console.log("✅ Telegram bot started."))
-  .catch((err) => {
+(async () => {
+  try {
+    await bot.telegram.deleteWebhook();
+    await bot.launch({ polling: true });
+    console.log("✅ Telegram bot started.");
+  } catch (err) {
     console.error("Failed to launch bot:", err);
     process.exit(1);
-  });
+  }
+})();
 
 const server = http.createServer((req, res) => {
   if (req.url === "/" && req.method === "GET") {
