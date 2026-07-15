@@ -83,11 +83,24 @@ serve(async (req) => {
         return Response.json({ error: "date is required" }, { status: 400 });
       }
 
+      // Фильтр прошедшего времени (Москва = UTC+3)
+      const now = new Date(new Date().getTime() + 3 * 60 * 60 * 1000);
+      const todayId = now.toISOString().slice(0, 10);
+      let slots = TIME_SLOTS;
+      if (date === todayId) {
+        const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+        slots = TIME_SLOTS.filter((t) => {
+          const [h, m] = t.split(":").map(Number);
+          return h * 60 + m > currentMinutes + 30; // буфер 30 минут
+        });
+      }
+
+      // Фильтр занятых слотов
       const sheet = await getSheet();
       const rows = await sheet.getRows();
       const active = rows.filter((row) => row.get("status") === "active");
 
-      const availableSlots = TIME_SLOTS.filter((time) => {
+      const availableSlots = slots.filter((time) => {
         if (master_id && master_id !== "any") {
           return !active.some(
             (row) => row.get("date") === date && row.get("time") === time && row.get("master_id") === master_id
