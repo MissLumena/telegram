@@ -70,29 +70,7 @@ async function ensureHeader() {
   }
 }
 
-export async function createAppointment(data) {
-  export async function createAppointment(data) {
-  // ===== ПРОВЕРКА НА ЗАНЯТОСТЬ (вставить этот блок) =====
-  const { data: existing, error: checkError } = await supabase
-    .from('appointments')
-    .select('*')
-    .eq('master', data.masterId)     // проверяем по мастеру
-    .eq('date', data.date)           // проверяем по дате
-    .eq('time', data.time)           // проверяем по времени
-    .eq('status', 'Новая');          // только активные записи
 
-  if (checkError) {
-    console.error('Ошибка проверки занятости:', checkError);
-    throw new Error('Не удалось проверить время');
-  }
-
-  if (existing && existing.length > 0) {
-    throw new Error('Это время уже занято');
-  }
-  // ===== КОНЕЦ БЛОКА ПРОВЕРКИ =====
-
-  // ... (здесь идёт твой старый код, который сохраняет запись)
-}
   await ensureHeader();
   const record = {
     id: data.id,
