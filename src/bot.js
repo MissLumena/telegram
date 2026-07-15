@@ -50,6 +50,40 @@ function summary(ctx) {
   ].join("\n");
 }
 
+async function safeEdit(ctx, text, markup) {
+  try {
+    return await ctx.editMessageText(text, markup);
+  } catch (err) {
+    const msg = err?.response?.description ?? err.message;
+    if (msg && msg.includes('message is not modified')) {
+      // benign: Telegram returns 400 if content+markup same — ignore
+      await safeAnswerCbQuery(ctx).catch(() => {});
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function safeAnswerCbQuery(ctx, text) {
+  try {
+    return await ctx.answerCbQuery(text);
+  } catch (err) {
+    const desc = err?.response?.description ?? err?.message ?? '';
+    // Ignore common benign Telegram callback errors
+    if (
+      desc.includes('message is not modified') ||
+      desc.includes('query is too old') ||
+      desc.includes('query ID is invalid') ||
+      desc.includes('callback query is not found')
+    ) {
+      return null;
+    }
+    // Log other errors but do not crash handlers
+    console.warn('safeAnswerCbQuery failed:', desc);
+    return null;
+  }
+}
+
 export function buildBot(token) {
   console.log("🤖 Создаём новый Telegraf бот...");
   const bot = new Telegraf(token);
@@ -66,33 +100,33 @@ export function buildBot(token) {
   bot.action("nav:home", async (ctx) => {
     reset(ctx.from.id);
     setState(ctx.from.id, States.START);
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Выберите действие:", mainMenu());
   });
 
   bot.action("faq:info", async (ctx) => {
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.reply(answerFaq("цены адрес часы"), backHomeKeyboard());
   });
 
   // ---- BOOKING SCENARIO --------------------------------------------------
   bot.action("book:start", async (ctx) => {
     setState(ctx.from.id, States.CHOOSING_SERVICE, {});
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Выберите услугу:", serviceKeyboard());
   });
 
   bot.action(/^book:svc:(.+)$/, async (ctx) => {
     const serviceId = ctx.match[1];
-    if (!serviceById(serviceId)) return ctx.answerCbQuery("Услуга не найдена");
+    if (!serviceById(serviceId)) return safeAnswerCbQuery(ctx, "Услуга не найдена");
     setState(ctx.from.id, States.CHOOSING_MASTER, { serviceId });
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Выберите мастера:", masterKeyboard(serviceId));
   });
 
   bot.action("book:back:svc", async (ctx) => {
     setState(ctx.from.id, States.CHOOSING_SERVICE, {});
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Выберите услугу:", serviceKeyboard());
   });
 
@@ -101,64 +135,69 @@ export function buildBot(token) {
     const { serviceId } = getContext(ctx.from.id);
     if (!serviceId) return ctx.answerCbQuery("Сессия устарела, начните заново");
     if (masterId !== "any" && !mastersForService(serviceId).some((m) => m.id === masterId)) {
-      return ctx.answerCbQuery("Мастер не найден");
+      return safeAnswerCbQuery(ctx, "Мастер не найден");
     }
     setState(ctx.from.id, States.CHOOSING_DATE, { serviceId, masterId });
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Выберите дату:", dateKeyboard());
   });
 
   bot.action("book:back:mst", async (ctx) => {
     const { serviceId } = getContext(ctx.from.id);
     setState(ctx.from.id, States.CHOOSING_MASTER, { serviceId });
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Выберите мастера:", masterKeyboard(serviceId));
   });
 
   bot.action(/^book:date:(.+)$/, async (ctx) => {
     const date = ctx.match[1];
     const context = getContext(ctx.from.id);
-    if (!getAvailableDates().some((d) => d.id === date)) return ctx.answerCbQuery("Дата недоступна");
+    if (!getAvailableDates().some((d) => d.id === date)) return safeAnswerCbQuery(ctx, "Дата недоступна");
     setState(ctx.from.id, States.CHOOSING_TIME, { date });
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
 
     let availableSlots = [];
     try {
       availableSlots = await getAvailableTimeSlots(context.serviceId, context.masterId, date);
     } catch (e) {
       console.error("available slots error:", e.message);
-      return ctx.editMessageText("Не удалось загрузить доступные слоты. Попробуйте снова.", dateKeyboard());
+      // Fallback: show default time slots but inform user that they may be stale
+      availableSlots = TIME_SLOTS.slice();
+      await ctx.answerCbQuery().catch(() => {});
+      await safeEdit(
+        ctx,
+        "Не удалось загрузить актуальные слоты. Показываю стандартный список (могут быть недоступны):",
+        dateKeyboard()
+      ).catch(() => {});
+      return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
     }
 
     if (!availableSlots.length) {
       setState(ctx.from.id, States.CHOOSING_DATE, context);
-      return ctx.editMessageText(
-        "На эту дату нет свободных слотов. Выберите другую дату:",
-        dateKeyboard()
-      );
+      return safeEdit(ctx, "На эту дату нет свободных слотов. Выберите другую дату:", dateKeyboard());
     }
 
-    return ctx.editMessageText("Выберите время:", timeKeyboard(availableSlots));
+    return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
   });
 
   bot.action("book:back:date", async (ctx) => {
     setState(ctx.from.id, States.CHOOSING_DATE, getContext(ctx.from.id));
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Выберите дату:", dateKeyboard());
   });
 
   bot.action(/^book:time:(.+)$/, async (ctx) => {
     const time = ctx.match[1];
-    if (!TIME_SLOTS.includes(time)) return ctx.answerCbQuery("Время недоступно");
+    if (!TIME_SLOTS.includes(time)) return safeAnswerCbQuery(ctx, "Время недоступно");
     setState(ctx.from.id, States.ENTERING_NAME, { time });
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Введите ваше имя текстом:", backHomeKeyboard());
   });
 
   // ---- CANCELLATION SCENARIO ---------------------------------------------
   bot.action("cancel:start", async (ctx) => {
     setState(ctx.from.id, States.CANCEL_SEARCH, {});
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText(
       "Введите ваш номер телефона, чтобы найти записи (например, +79991234567):",
       backHomeKeyboard()
@@ -169,7 +208,7 @@ export function buildBot(token) {
     const id = ctx.match[1];
     const { phone } = getContext(ctx.from.id);
     setState(ctx.from.id, States.CANCEL_CONFIRM, { cancelId: id, phone });
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText("Отменить эту запись?", cancelConfirmKeyboard(id));
   });
 
@@ -182,7 +221,7 @@ export function buildBot(token) {
       console.error("list_by_phone error:", e.message);
     }
     setState(ctx.from.id, States.CANCEL_LIST, { phone });
-    await ctx.answerCbQuery();
+    await safeAnswerCbQuery(ctx);
     return ctx.editMessageText(
       list.length ? "Ваши активные записи:" : "Активных записей нет.",
       cancelListKeyboard(list)
@@ -196,11 +235,11 @@ export function buildBot(token) {
       await cancelAppointment(id, phone);
     } catch (e) {
       console.error("cancel error:", e.message);
-      await ctx.answerCbQuery("Ошибка отмены");
+      await safeAnswerCbQuery(ctx, "Ошибка отмены");
       return ctx.editMessageText("Не удалось отменить запись. Попробуйте позже или позвоните +7 (495) 000-00-00.", mainMenu());
     }
     setState(ctx.from.id, States.CANCEL_DONE);
-    await ctx.answerCbQuery("Запись отменена");
+    await safeAnswerCbQuery(ctx, "Запись отменена");
     return ctx.editMessageText("Запись отменена. Ждём вас снова!", mainMenu());
   });
 
@@ -208,7 +247,7 @@ export function buildBot(token) {
   bot.action("book:confirm", async (ctx) => {
     const c = getContext(ctx.from.id);
     if (!c.serviceId || !c.date || !c.time || !c.name || !c.phone) {
-      await ctx.answerCbQuery("Сессия устарела");
+      await safeAnswerCbQuery(ctx, "Сессия устарела");
       return ctx.editMessageText("Данные устарели. Начните заново.", mainMenu());
     }
     setState(ctx.from.id, States.SAVING);
@@ -231,7 +270,7 @@ export function buildBot(token) {
     } catch (e) {
       console.error("create appointment error:", e.message);
       setState(ctx.from.id, States.START);
-      await ctx.answerCbQuery("Ошибка сохранения");
+      await safeAnswerCbQuery(ctx, "Ошибка сохранения");
       if (e.message.includes("slot unavailable")) {
         return ctx.editMessageText(
           "Выбранный слот уже заняли. Пожалуйста, начните запись заново и выберите другое время.",
@@ -241,7 +280,7 @@ export function buildBot(token) {
       return ctx.editMessageText("Не удалось сохранить запись. Попробуйте позже или позвоните +7 (495) 000-00-00.", mainMenu());
     }
     setState(ctx.from.id, States.SUCCESS);
-    await ctx.answerCbQuery("Готово!");
+    await safeAnswerCbQuery(ctx, "Готово!");
     return ctx.editMessageText(
       `Вы записаны!\n${summary(c)}\n\nНомер записи: ${id}`,
       mainMenu()
@@ -251,7 +290,7 @@ export function buildBot(token) {
   bot.action("book:abort", async (ctx) => {
     reset(ctx.from.id);
     setState(ctx.from.id, States.START);
-    await ctx.answerCbQuery("Отменено");
+    await safeAnswerCbQuery(ctx, "Отменено");
     return ctx.editMessageText("Запись прервана. Выберите действие:", mainMenu());
   });
 

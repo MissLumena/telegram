@@ -55,11 +55,27 @@ async function getSheet() {
 
 serve(async (req) => {
   try {
-    const body = await req.json();
-    const { action } = body;
-    const sheet = await getSheet();
+    // Read raw body so we can log it even if parsing fails
+    const raw = await req.text().catch(() => "");
+    let body = {};
+    try {
+      body = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      console.error("sheets-appointments: invalid JSON body:", raw);
+      return Response.json({ error: "Invalid JSON" }, { status: 400 });
+    }
 
+    const { action } = body;
+    console.log("sheets-appointments: received request", {
+      action,
+      hasSpreadsheetId: !!SPREADSHEET_ID,
+      hasGoogleEmail: !!GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    });
+    console.log("sheets-appointments: body", body);
+
+    // Ensure sheet only when needed to avoid failing early before logging
     if (action === "ensure_header") {
+      const sheet = await getSheet();
       const rows = await sheet.getRows({ limit: 1 });
       if (rows.length === 0) {
         await sheet.setHeaderRow(HEADERS);
@@ -69,10 +85,11 @@ serve(async (req) => {
 
     if (action === "list_available_slots") {
       const { date, service_id, master_id } = body;
+      console.log("list_available_slots params", { date, service_id, master_id });
       if (!date) {
         return Response.json({ error: "date is required" }, { status: 400 });
       }
-
+      const sheet = await getSheet();
       const rows = await sheet.getRows();
       const active = rows.filter((row) => row.get("status") === "active");
 
@@ -91,15 +108,17 @@ serve(async (req) => {
         );
       });
 
+      console.log("availableSlots computed", { date, availableSlots });
       return Response.json({ availableSlots });
     }
 
     if (action === "create") {
       const a = body.appointment;
+      console.log("create appointment payload", a);
       if (!a || !a.date || !a.time || !a.service_id) {
         return Response.json({ error: "Invalid appointment payload" }, { status: 400 });
       }
-
+      const sheet = await getSheet();
       const rows = await sheet.getRows();
       const active = rows.filter((row) => row.get("status") === "active");
 
@@ -112,6 +131,7 @@ serve(async (req) => {
         );
         const freeMaster = eligibleMasters.find((master) => !bookedIds.has(master.id));
         if (!freeMaster) {
+          console.log("create: no free master", { eligibleMasters, bookedIds: Array.from(bookedIds) });
           return Response.json({ error: "slot unavailable" }, { status: 409 });
         }
         a.master_id = freeMaster.id;
@@ -121,16 +141,21 @@ serve(async (req) => {
           (row) => row.get("date") === a.date && row.get("time") === a.time && row.get("master_id") === a.master_id
         );
         if (slotTaken) {
+          console.log("create: slot already taken", { a });
           return Response.json({ error: "slot unavailable" }, { status: 409 });
         }
       }
 
       await sheet.addRow({ ...a, status: "active" });
+      console.log("create: appointment saved", { id: a.id });
       return Response.json({ ok: true, appointment: { ...a } });
     }
 
     if (action === "list_by_phone") {
-      const phone = normalizePhone(body.phone);
+      const phoneRaw = body.phone;
+      const phone = normalizePhone(phoneRaw);
+      console.log("list_by_phone for", phoneRaw, "->", phone);
+      const sheet = await getSheet();
       const rows = await sheet.getRows();
       const appointments = rows
         .filter((row) => normalizePhone(row.get("phone")) === phone && row.get("status") === "active")
@@ -143,24 +168,32 @@ serve(async (req) => {
           date: row.get("date"),
           time: row.get("time"),
         }));
+      console.log("list_by_phone found", appointments.length, "appointments");
       return Response.json({ appointments });
     }
 
     if (action === "cancel") {
       const phone = normalizePhone(body.phone);
+      console.log("cancel request", { id: body.id, phone });
+      const sheet = await getSheet();
       const rows = await sheet.getRows();
       const row = rows.find(
         (row) => row.get("id") === body.id && normalizePhone(row.get("phone")) === phone
       );
-      if (!row) return Response.json({ error: "Not found" }, { status: 404 });
+      if (!row) {
+        console.log("cancel: not found", { id: body.id, phone });
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
       row.set("status", "cancelled");
       await row.save();
+      console.log("cancel: success", { id: body.id });
       return Response.json({ ok: true });
     }
 
-    return Response.json({ error: "Unknown action" }, { status: 400 });
+    console.error("Unknown action", body);
+    return Response.json({ error: "Unknown action", received: body }, { status: 400 });
   } catch (e) {
-    console.error(e);
+    console.error("sheets-appointments: uncaught error", e?.stack ?? e);
     return Response.json({ error: String(e) }, { status: 500 });
   }
 });
