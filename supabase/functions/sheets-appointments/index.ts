@@ -21,6 +21,14 @@ const HEADERS = [
   "status",
 ];
 
+function normalizePhone(raw) {
+  if (!raw) return "";
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length === 11 && (digits[0] === "7" || digits[0] === "8")) return "+7" + digits.slice(1);
+  if (digits.length === 10) return "+7" + digits;
+  return "+" + digits;
+}
+
 const TIME_SLOTS = ["10:00", "11:30", "13:00", "14:30", "16:00", "17:30", "19:00"];
 
 const MASTERS = [
@@ -122,9 +130,10 @@ serve(async (req) => {
     }
 
     if (action === "list_by_phone") {
+      const phone = normalizePhone(body.phone);
       const rows = await sheet.getRows();
       const appointments = rows
-        .filter((row) => row.get("phone") === body.phone && row.get("status") === "active")
+        .filter((row) => normalizePhone(row.get("phone")) === phone && row.get("status") === "active")
         .map((row) => ({
           id: row.get("id"),
           service_id: row.get("service_id"),
@@ -138,8 +147,11 @@ serve(async (req) => {
     }
 
     if (action === "cancel") {
+      const phone = normalizePhone(body.phone);
       const rows = await sheet.getRows();
-      const row = rows.find((row) => row.get("id") === body.id && row.get("phone") === body.phone);
+      const row = rows.find(
+        (row) => row.get("id") === body.id && normalizePhone(row.get("phone")) === phone
+      );
       if (!row) return Response.json({ error: "Not found" }, { status: 404 });
       row.set("status", "cancelled");
       await row.save();

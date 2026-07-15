@@ -167,7 +167,8 @@ export function buildBot(token) {
 
   bot.action(/^cancel:pick:(.+)$/, async (ctx) => {
     const id = ctx.match[1];
-    setState(ctx.from.id, States.CANCEL_CONFIRM, { cancelId: id });
+    const { phone } = getContext(ctx.from.id);
+    setState(ctx.from.id, States.CANCEL_CONFIRM, { cancelId: id, phone });
     await ctx.answerCbQuery();
     return ctx.editMessageText("Отменить эту запись?", cancelConfirmKeyboard(id));
   });
