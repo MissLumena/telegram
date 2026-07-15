@@ -39,9 +39,9 @@ export const dateKeyboard = () => {
   return Markup.inlineKeyboard(rows);
 };
 
-export const timeKeyboard = () =>
+export const timeKeyboard = (availableSlots = TIME_SLOTS) =>
   Markup.inlineKeyboard([
-    ...TIME_SLOTS.map((t) => [Markup.button.callback(t, `book:time:${t}`)]),
+    ...availableSlots.map((t) => [Markup.button.callback(t, `book:time:${t}`)]),
     [Markup.button.callback("← Назад", "book:back:date")],
   ]);
 

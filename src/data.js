@@ -22,11 +22,13 @@ export const TIME_SLOTS = ["10:00", "11:30", "13:00", "14:30", "16:00", "17:30",
 export function getAvailableDates(daysAhead = 14) {
   const out = [];
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0, 0);
+  const startUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const dayMs = 24 * 60 * 60 * 1000;
+
   for (let i = 0; i < daysAhead; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
-    if (d.getDay() === 1) continue; // Monday closed
+    const d = new Date(startUtc + i * dayMs);
+    if (d.getUTCDay() === 1) continue; // Monday closed
     out.push({
       id: d.toISOString().slice(0, 10),
       label: d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "long" }),

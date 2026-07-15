@@ -48,8 +48,19 @@ export async function createAppointment(data) {
     phone: data.phone,
     telegram_user_id: data.telegramUserId,
   };
-  await callEdge({ action: "create", appointment: record });
-  return { ...record, status: "active" };
+  const response = await callEdge({ action: "create", appointment: record });
+  return {
+    ...record,
+    masterId: response.appointment?.master_id ?? record.master_id,
+    masterName: response.appointment?.master_name ?? record.master_name,
+    status: "active",
+  };
+}
+
+export async function getAvailableTimeSlots(serviceId, masterId, date) {
+  await ensureHeader();
+  const data = await callEdge({ action: "list_available_slots", service_id: serviceId, master_id: masterId, date });
+  return Array.isArray(data.availableSlots) ? data.availableSlots : [];
 }
 
 export async function getAppointmentsByPhone(phone) {

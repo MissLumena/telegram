@@ -9,6 +9,7 @@ import {
 } from "./data.js";
 import {
   createAppointment,
+  getAvailableTimeSlots,
   getAppointmentsByPhone,
   cancelAppointment,
   isValidPhone,
@@ -116,10 +117,28 @@ export function buildBot(token) {
 
   bot.action(/^book:date:(.+)$/, async (ctx) => {
     const date = ctx.match[1];
+    const context = getContext(ctx.from.id);
     if (!getAvailableDates().some((d) => d.id === date)) return ctx.answerCbQuery("Дата недоступна");
     setState(ctx.from.id, States.CHOOSING_TIME, { date });
     await ctx.answerCbQuery();
-    return ctx.editMessageText("Выберите время:", timeKeyboard());
+
+    let availableSlots = [];
+    try {
+      availableSlots = await getAvailableTimeSlots(context.serviceId, context.masterId, date);
+    } catch (e) {
+      console.error("available slots error:", e.message);
+      return ctx.editMessageText("Не удалось загрузить доступные слоты. Попробуйте снова.", dateKeyboard());
+    }
+
+    if (!availableSlots.length) {
+      setState(ctx.from.id, States.CHOOSING_DATE, context);
+      return ctx.editMessageText(
+        "На эту дату нет свободных слотов. Выберите другую дату:",
+        dateKeyboard()
+      );
+    }
+
+    return ctx.editMessageText("Выберите время:", timeKeyboard(availableSlots));
   });
 
   bot.action("book:back:date", async (ctx) => {
@@ -212,6 +231,12 @@ export function buildBot(token) {
       console.error("create appointment error:", e.message);
       setState(ctx.from.id, States.START);
       await ctx.answerCbQuery("Ошибка сохранения");
+      if (e.message.includes("slot unavailable")) {
+        return ctx.editMessageText(
+          "Выбранный слот уже заняли. Пожалуйста, начните запись заново и выберите другое время.",
+          mainMenu()
+        );
+      }
       return ctx.editMessageText("Не удалось сохранить запись. Попробуйте позже или позвоните +7 (495) 000-00-00.", mainMenu());
     }
     setState(ctx.from.id, States.SUCCESS);

@@ -1,48 +1,154 @@
-import "node:process";
-import { readFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import express from 'express';
-import { buildBot } from "./bot.js";
+﻿import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { GoogleSpreadsheet } from "npm:google-spreadsheet@4.1.2";
+import { JWT } from "npm:google-auth-library@9.0.0";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const envPath = join(__dirname, "..", ".env");
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, "utf8").split("\n")) {
-    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
-  }
+const SPREADSHEET_ID = Deno.env.get("SPREADSHEET_ID") ?? "";
+const GOOGLE_SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL") ?? "";
+const GOOGLE_PRIVATE_KEY = (Deno.env.get("GOOGLE_PRIVATE_KEY") ?? "").replace(/\\n/g, "\n");
+
+const HEADERS = [
+  "id",
+  "created_at",
+  "service_id",
+  "service_title",
+  "master_id",
+  "master_name",
+  "date",
+  "time",
+  "client_name",
+  "phone",
+  "telegram_user_id",
+  "status",
+];
+
+const TIME_SLOTS = ["10:00", "11:30", "13:00", "14:30", "16:00", "17:30", "19:00"];
+
+const MASTERS = [
+  { id: "anna", name: "Анна", services: ["haircut", "coloring"] },
+  { id: "elena", name: "Елена", services: ["manicure", "pedicure"] },
+  { id: "olga", name: "Ольга", services: ["brows", "manicure"] },
+  { id: "marina", name: "Марина", services: ["haircut", "coloring", "brows"] },
+];
+
+function mastersForService(serviceId) {
+  return MASTERS.filter((master) => master.services.includes(serviceId));
 }
 
-const token = process.env.BOT_TOKEN;
-if (!token) { console.error("❌ BOT_TOKEN не задан!"); process.exit(1); }
+async function getSheet() {
+  const jwt = new JWT({
+    email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: GOOGLE_PRIVATE_KEY,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  const doc = new GoogleSpreadsheet(SPREADSHEET_ID, jwt);
+  await doc.loadInfo();
+  return doc.sheetsByIndex[0];
+}
 
-const webhookUrl = process.env.WEBHOOK_URL;
-if (!webhookUrl) { console.error("❌ WEBHOOK_URL не задан!"); process.exit(1); }
-
-const bot = buildBot(token);
-const port = process.env.PORT || 10000;
-const app = express();
-app.use(express.json());
-
-app.post('/webhook', (req, res) => {
-  bot.handleUpdate(req.body)
-    .then(() => res.sendStatus(200))
-    .catch((err) => { console.error('Webhook error:', err); res.sendStatus(500); });
-});
-
-app.get('/health', (req, res) => res.status(200).send('OK'));
-
-// Сначала порт, потом webhook
-app.listen(port, '0.0.0.0', async () => {
-  console.log(`✅ Сервер поднят на порту ${port}`);
+serve(async (req) => {
   try {
-    await bot.telegram.setWebhook(webhookUrl);
-    console.log(`✅ Webhook установлен: ${webhookUrl}`);
+    const body = await req.json();
+    const { action } = body;
+    const sheet = await getSheet();
+
+    if (action === "ensure_header") {
+      const rows = await sheet.getRows({ limit: 1 });
+      if (rows.length === 0) {
+        await sheet.setHeaderRow(HEADERS);
+      }
+      return Response.json({ ok: true });
+    }
+
+    if (action === "list_available_slots") {
+      const { date, service_id, master_id } = body;
+      if (!date) {
+        return Response.json({ error: "date is required" }, { status: 400 });
+      }
+
+      const rows = await sheet.getRows();
+      const active = rows.filter((row) => row.get("status") === "active");
+
+      const availableSlots = TIME_SLOTS.filter((time) => {
+        if (master_id && master_id !== "any") {
+          return !active.some(
+            (row) => row.get("date") === date && row.get("time") === time && row.get("master_id") === master_id
+          );
+        }
+
+        const eligibleMasters = service_id ? mastersForService(service_id) : MASTERS;
+        return eligibleMasters.some(
+          (master) => !active.some(
+            (row) => row.get("date") === date && row.get("time") === time && row.get("master_id") === master.id
+          )
+        );
+      });
+
+      return Response.json({ availableSlots });
+    }
+
+    if (action === "create") {
+      const a = body.appointment;
+      if (!a || !a.date || !a.time || !a.service_id) {
+        return Response.json({ error: "Invalid appointment payload" }, { status: 400 });
+      }
+
+      const rows = await sheet.getRows();
+      const active = rows.filter((row) => row.get("status") === "active");
+
+      if (a.master_id === "any") {
+        const eligibleMasters = mastersForService(a.service_id);
+        const bookedIds = new Set(
+          active
+            .filter((row) => row.get("date") === a.date && row.get("time") === a.time)
+            .map((row) => row.get("master_id"))
+        );
+        const freeMaster = eligibleMasters.find((master) => !bookedIds.has(master.id));
+        if (!freeMaster) {
+          return Response.json({ error: "slot unavailable" }, { status: 409 });
+        }
+        a.master_id = freeMaster.id;
+        a.master_name = freeMaster.name;
+      } else {
+        const slotTaken = active.some(
+          (row) => row.get("date") === a.date && row.get("time") === a.time && row.get("master_id") === a.master_id
+        );
+        if (slotTaken) {
+          return Response.json({ error: "slot unavailable" }, { status: 409 });
+        }
+      }
+
+      await sheet.addRow({ ...a, status: "active" });
+      return Response.json({ ok: true, appointment: { ...a } });
+    }
+
+    if (action === "list_by_phone") {
+      const rows = await sheet.getRows();
+      const appointments = rows
+        .filter((row) => row.get("phone") === body.phone && row.get("status") === "active")
+        .map((row) => ({
+          id: row.get("id"),
+          service_id: row.get("service_id"),
+          service_title: row.get("service_title"),
+          master_id: row.get("master_id"),
+          master_name: row.get("master_name"),
+          date: row.get("date"),
+          time: row.get("time"),
+        }));
+      return Response.json({ appointments });
+    }
+
+    if (action === "cancel") {
+      const rows = await sheet.getRows();
+      const row = rows.find((row) => row.get("id") === body.id && row.get("phone") === body.phone);
+      if (!row) return Response.json({ error: "Not found" }, { status: 404 });
+      row.set("status", "cancelled");
+      await row.save();
+      return Response.json({ ok: true });
+    }
+
+    return Response.json({ error: "Unknown action" }, { status: 400 });
   } catch (e) {
-    console.error("❌ Ошибка setWebhook:", e?.message ?? e);
+    console.error(e);
+    return Response.json({ error: String(e) }, { status: 500 });
   }
 });
-
-process.once("SIGINT", () => { try { bot.stop("SIGINT"); } catch (_) {} process.exit(0); });
-process.once("SIGTERM", () => { try { bot.stop("SIGTERM"); } catch (_) {} process.exit(0); });
