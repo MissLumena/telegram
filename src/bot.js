@@ -154,32 +154,37 @@ export function buildBot(token) {
     const context = getContext(ctx.from.id);
     if (!getAvailableDates().some((d) => d.id === date)) return safeAnswerCbQuery(ctx, "Дата недоступна");
     setState(ctx.from.id, States.CHOOSING_TIME, { date });
-    await safeAnswerCbQuery(ctx);
+    
+await safeAnswerCbQuery(ctx);
 
-    let availableSlots = [];
-    try {
-      availableSlots = await getAvailableTimeSlots(context.serviceId, context.masterId, date);
-    } catch (e) {
-      console.error("available slots error:", e.message);
-      // Fallback: show default time slots but inform user that they may be stale
-      availableSlots = TIME_SLOTS.slice();
-      await ctx.answerCbQuery().catch(() => {});
-      await safeEdit(
-        ctx,
-        "Не удалось загрузить актуальные слоты. Показываю стандартный список (могут быть недоступны):",
-        dateKeyboard()
-      ).catch(() => {});
-      return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
-    }
-
-    if (!availableSlots.length) {
-      setState(ctx.from.id, States.CHOOSING_DATE, context);
-      return safeEdit(ctx, "На эту дату нет свободных слотов. Выберите другую дату:", dateKeyboard());
-    }
-
-    return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
+let availableSlots = [];
+try {
+  availableSlots = await getAvailableTimeSlots(context.serviceId, context.masterId, date);
+} catch (e) {
+  console.error("available slots error:", e.message);
+  const nowMoscow = new Date(new Date().getTime() + 3 * 60 * 60 * 1000);
+  const todayId = nowMoscow.toISOString().slice(0, 10);
+  const currentMinutes = nowMoscow.getUTCHours() * 60 + nowMoscow.getUTCMinutes();
+  availableSlots = TIME_SLOTS.filter((t) => {
+    if (date !== todayId) return true;
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m > currentMinutes + 30;
   });
+  await ctx.answerCbQuery().catch(() => {});
+  await safeEdit(
+    ctx,
+    "Не удалось загрузить актуальные слоты. Показываю стандартный список (могут быть недоступны):",
+    dateKeyboard()
+  ).catch(() => {});
+  return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
+}
 
+if (!availableSlots.length) {
+  setState(ctx.from.id, States.CHOOSING_DATE, context);
+  return safeEdit(ctx, "На эту дату нет свободных слотов. Выберите другую дату:", dateKeyboard());
+}
+
+return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
   bot.action("book:back:date", async (ctx) => {
     setState(ctx.from.id, States.CHOOSING_DATE, getContext(ctx.from.id));
     await safeAnswerCbQuery(ctx);
