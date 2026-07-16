@@ -70,7 +70,9 @@ async function ensureHeader() {
   }
 }
 
-
+export async function createAppointment(data) {
+  await ensureHeader();
+  const record = {
   await ensureHeader();
   const record = {
     id: data.id,
