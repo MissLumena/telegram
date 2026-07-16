@@ -177,7 +177,7 @@ try {
     dateKeyboard()
   ).catch(() => {});
   
-  (ctx, "Выберите время:", timeKeyboard(availableSlots));
+  return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
 }
 
 if (!availableSlots.length) {
