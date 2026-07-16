@@ -176,7 +176,8 @@ try {
     "Не удалось загрузить актуальные слоты. Показываю стандартный список (могут быть недоступны):",
     dateKeyboard()
   ).catch(() => {});
-  return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
+  
+  (ctx, "Выберите время:", timeKeyboard(availableSlots));
 }
 
 if (!availableSlots.length) {
@@ -185,6 +186,8 @@ if (!availableSlots.length) {
 }
 
 return safeEdit(ctx, "Выберите время:", timeKeyboard(availableSlots));
+  });
+
   bot.action("book:back:date", async (ctx) => {
     setState(ctx.from.id, States.CHOOSING_DATE, getContext(ctx.from.id));
     await safeAnswerCbQuery(ctx);
