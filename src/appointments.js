@@ -1,13 +1,11 @@
-// Appointments store backed by Google Sheets via a Supabase edge function.
-// The edge function handles JWT auth to Google Sheets API; this module is a
-// thin async client. Phone normalization/validation stays here for input checks.
-
 const EDGE_KEY = process.env.SUPABASE_ANON_KEY;
-
+ 
 async function callEdge(body) {
-  const EDGE_URL = process.env.SUPABASE_URL ? `${process.env.SUPABASE_URL}/functions/v1/sheets-appointments` : null;
-  if (!EDGE_URL) throw new Error('SUPABASE_URL is not set; cannot call edge function');
-
+  const EDGE_URL = process.env.SUPABASE_URL
+    ? `${process.env.SUPABASE_URL}/functions/v1/sheets-appointments`
+    : null;
+  if (!EDGE_URL) throw new Error("SUPABASE_URL is not set");
+ 
   const maxAttempts = 2;
   let lastErr;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -20,22 +18,9 @@ async function callEdge(body) {
         },
         body: JSON.stringify(body),
       });
-
-      let data = {};
-      if (typeof res.json === 'function') {
-        data = await res.json().catch(() => ({}));
-      } else {
-        const text = typeof res.text === 'function' ? await res.text().catch(() => "") : "";
-        try {
-          data = text ? JSON.parse(text) : {};
-        } catch (e) {
-          data = { error: `Invalid JSON response: ${text}` };
-        }
-      }
-
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const errMsg = data?.error ?? `Edge function error ${res.status}`;
-        // Retry on server errors
         if (res.status >= 500 && attempt < maxAttempts) {
           lastErr = new Error(errMsg);
           await new Promise((r) => setTimeout(r, 200 * attempt));
@@ -43,13 +28,11 @@ async function callEdge(body) {
         }
         throw new Error(errMsg);
       }
-
       if (data.error) throw new Error(data.error);
       return data;
     } catch (e) {
       lastErr = e;
       if (attempt < maxAttempts) {
-        console.warn(`callEdge attempt ${attempt} failed, retrying:`, e.message);
         await new Promise((r) => setTimeout(r, 150 * attempt));
         continue;
       }
@@ -57,9 +40,9 @@ async function callEdge(body) {
   }
   throw lastErr;
 }
-
+ 
 let headerInitialized = false;
-
+ 
 async function ensureHeader() {
   if (headerInitialized) return;
   try {
@@ -69,10 +52,8 @@ async function ensureHeader() {
     console.error("ensure_header failed:", e.message);
   }
 }
-
+ 
 export async function createAppointment(data) {
-  await ensureHeader();
-  const record = {
   await ensureHeader();
   const record = {
     id: data.id,
@@ -95,13 +76,18 @@ export async function createAppointment(data) {
     status: "active",
   };
 }
-
+ 
 export async function getAvailableTimeSlots(serviceId, masterId, date) {
   await ensureHeader();
-  const data = await callEdge({ action: "list_available_slots", service_id: serviceId, master_id: masterId, date });
+  const data = await callEdge({
+    action: "list_available_slots",
+    service_id: serviceId,
+    master_id: masterId,
+    date,
+  });
   return Array.isArray(data.availableSlots) ? data.availableSlots : [];
 }
-
+ 
 export async function getAppointmentsByPhone(phone) {
   await ensureHeader();
   const data = await callEdge({ action: "list_by_phone", phone: normalizePhone(phone) });
@@ -115,23 +101,26 @@ export async function getAppointmentsByPhone(phone) {
     time: a.time,
   }));
 }
-
+ 
 export async function cancelAppointment(id, phone) {
   await ensureHeader();
   await callEdge({ action: "cancel", id, phone: normalizePhone(phone) });
   return { id, status: "cancelled" };
 }
-
+ 
 export function normalizePhone(raw) {
   const digits = String(raw).replace(/\D/g, "");
-  if (digits.length === 11 && (digits[0] === "7" || digits[0] === "8")) return "+7" + digits.slice(1);
+  if (digits.length === 11 && (digits[0] === "7" || digits[0] === "8"))
+    return "+7" + digits.slice(1);
   if (digits.length === 10) return "+7" + digits;
   return "+" + digits;
 }
-
+ 
 export function isValidPhone(raw) {
   const digits = String(raw).replace(/\D/g, "");
   return (
-    (digits.length === 11 && (digits[0] === "7" || digits[0] === "8")) || digits.length === 10
+    (digits.length === 11 && (digits[0] === "7" || digits[0] === "8")) ||
+    digits.length === 10
   );
 }
+ 
